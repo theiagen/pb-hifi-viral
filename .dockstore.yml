@@ -1,0 +1,7 @@
+version: 1.2
+workflows:
+ - name: pb-hifi-viral-sarscov2
+   subclass: WDL
+   primaryDescriptorPath: /workflows/pb_sars_cov2_kit.wdl
+   testParameterFiles:
+    - empty.json
