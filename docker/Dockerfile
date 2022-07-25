@@ -58,5 +58,15 @@ WORKDIR /data
 ENV PATH="${PATH}:/opt/conda/bin/"
 
 # new base for testing
-#FROM app as test
+FROM app as test
 
+# so that mamba/conda env is active when running below commands
+ENV ENV_NAME="base"
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+
+# simple tests to see versions and help options for important tools
+RUN micromamba list && \
+ samtools --help && \
+ bcftools --help && \
+ pbmm2 --help && \
+ VCFCons.py --help
