@@ -52,6 +52,9 @@ RUN git clone https://github.com/Magdoll/CoSA.git && \
  python setup.py build && \
  python setup.py install
 
+# copy in mimux binary
+COPY mimux /usr/local/bin
+
 WORKDIR /data
 
 # hardcode executables from base conda env into the PATH variable
@@ -69,4 +72,5 @@ RUN micromamba list && \
  samtools --help && \
  bcftools --help && \
  pbmm2 --help && \
- VCFCons.py --help
+ VCFCons.py --help && \
+ mimux -h
