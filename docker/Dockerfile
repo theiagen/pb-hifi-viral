@@ -40,8 +40,6 @@ RUN micromamba install -n base -f /environment.yml -y && \
 ENV ENV_NAME="base"
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
-## INSTALL mimux - COPY IN BINARY?
-
 # install VCFCons.py script manually
 # RUN wget -O /usr/bin/VCFCons.py https://raw.githubusercontent.com/PacificBiosciences/CoSA/master/vcf/VCFCons.py && \
 #  chmod +x /usr/bin/VCFCons.py
