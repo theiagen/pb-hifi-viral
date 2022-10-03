@@ -91,33 +91,34 @@ task run_sample {
     set -x
     echo `pwd`
 
-    # to remove any ambiguity we generate a new BAM file first; this will
-    # have already been filtered by BQ >= 80
-    dataset \
-      --log-level DEBUG \
-      --log-file dataset_consolidate.log \
-      consolidate \
-      ${ccs_reads} \
-      input.ccs.bam input.consensusreadset.xml
+    ########### COMMENTING OUT FOR NOW, STARTING AT MIMUX STEP ######################
+    # # to remove any ambiguity we generate a new BAM file first; this will
+    # # have already been filtered by BQ >= 80
+    # dataset \
+    #   --log-level DEBUG \
+    #   --log-file dataset_consolidate.log \
+    #   consolidate \
+    #   ${ccs_reads} \
+    #   input.ccs.bam input.consensusreadset.xml
 
-    # the input BAM will be used to set the sample name in the gathered outputs
-    echo `pwd`/input.ccs.bam > outputs.fofn
+    # # the input BAM will be used to set the sample name in the gathered outputs
+    # echo `pwd`/input.ccs.bam > outputs.fofn
 
-    # FIXME VCFCons can't read the biosample info directly, and it's also
-    # insensitive to spaces in the sample name, hence the "clean" txt.  We
-    # preserve the spaces in all reporting, just not the consensus outputs.
-    python3 <<EOF
-    from pbcore.io import BamReader
-    bam = BamReader("input.ccs.bam")
-    biosample = bam.readGroupTable[0].SampleName.strip()
-    with open("biosample_clean.txt", "wt") as txt_out:
-      txt_out.write(biosample.replace(" ", "_"))
-    with open("biosample.txt", "wt") as txt_out:
-      txt_out.write(biosample)
-    EOF
+    # # FIXME VCFCons can't read the biosample info directly, and it's also
+    # # insensitive to spaces in the sample name, hence the "clean" txt.  We
+    # # preserve the spaces in all reporting, just not the consensus outputs.
+    # python3 <<EOF
+    # from pbcore.io import BamReader
+    # bam = BamReader("input.ccs.bam")
+    # biosample = bam.readGroupTable[0].SampleName.strip()
+    # with open("biosample_clean.txt", "wt") as txt_out:
+    #   txt_out.write(biosample.replace(" ", "_"))
+    # with open("biosample.txt", "wt") as txt_out:
+    #   txt_out.write(biosample)
+    # EOF
 
-    ln -s ${genome_fasta} genome.fasta
-    ln -s ${genome_fasta_fai} genome.fasta.fai
+    # ln -s ${genome_fasta} genome.fasta
+    # ln -s ${genome_fasta_fai} genome.fasta.fai
 
     # remove and record arms & UMI sequences
     mimux \
@@ -180,9 +181,9 @@ task run_sample {
       bcftools filter -e 'QUAL < 20' - > variants_bcftools.vcf) || \
       echo "ERROR: variant calling failed"
 
-      (VCFCons \
+      (VCFCons.py \
         genome.fasta sample \
-        --sample-name "`cat biosample_clean.txt`" \
+        ## --sample-name "`cat biosample_clean.txt`" \
         --min_coverage ${min_coverage} \
         --min_alt_freq ${min_alt_freq} \
         --vcf_type bcftools \
