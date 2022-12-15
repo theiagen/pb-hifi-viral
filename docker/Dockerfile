@@ -25,10 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  procps && \
  apt-get autoclean && rm -rf /var/lib/apt/lists/* && mkdir /data
 
-# set the environment, can adjust PATH if needed. LC_ALL for singularity compatibility
-ENV PATH="$PATH" \
- LC_ALL=C.UTF-8
-
 # copy in conda environment yml file
 COPY environment.yml /environment.yml
 
@@ -59,8 +55,9 @@ RUN mkdir /reference-data && cd /reference-data/ && \
 
 WORKDIR /data
 
-# hardcode executables from base conda env into the PATH variable
-ENV PATH="${PATH}:/opt/conda/bin/"
+# hardcode executables from base conda env into the PATH variable; LC_ALL for singularity compatibility
+ENV PATH="${PATH}:/opt/conda/bin/" \
+ LC_ALL=C.UTF-8
 
 # new base for testing
 FROM app as test
