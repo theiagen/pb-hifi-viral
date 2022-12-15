@@ -1,4 +1,4 @@
-FROM mambaorg/micromamba:0.24.0 as app
+FROM mambaorg/micromamba:1.1.0 as app
 
 # build and run as root users since micromamba image has 'mambauser' set as the $USER
 USER root
@@ -6,7 +6,7 @@ USER root
 WORKDIR /
 
 # metadata labels
-LABEL base.image="mambaorg/micromamba:0.24.0"
+LABEL base.image="mambaorg/micromamba:1.1.0"
 LABEL dockerfile.version="1"
 LABEL software="pbsc2"
 LABEL software.version="1"
@@ -32,7 +32,7 @@ ENV PATH="$PATH" \
 # copy in conda environment yml file
 COPY environment.yml /environment.yml
 
-# install things into conda/mamba environment
+# install things into base conda/mamba environment
 RUN micromamba install -n base -f /environment.yml -y && \
  micromamba clean -a -y
 
@@ -52,6 +52,10 @@ RUN git clone https://github.com/Magdoll/CoSA.git && \
 
 # copy in mimux binary
 COPY mimux /usr/local/bin
+
+# download WuHan-1 reference genome (MN908947.3)
+RUN mkdir /reference-data && cd /reference-data/ && \
+ wget -O MN908947.3.SARS-CoV-2.reference.fasta https://raw.githubusercontent.com/epi2me-labs/wf-artic/master/data/primer_schemes/SARS-CoV-2/ARTIC/V4.1/SARS-CoV-2.reference.fasta
 
 WORKDIR /data
 
