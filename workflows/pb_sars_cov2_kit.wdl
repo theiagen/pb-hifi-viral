@@ -49,16 +49,21 @@ task collect_inputs {
 # usual.
 task run_sample {
   input {
-    File ccs_reads # "child" XML file - sample specific
-    File genome_fasta
-    File genome_fasta_fai
+    # theiagen added inputs
+    String samplename 
+    File pacbio_fastq # input FASTQ files, must have record arms & UMIs removed by mimux prior to this workflow
+    String docker = "pacbio:20221215" # currently only on Curtis' dev VM, will eventually change to publicly available image on Theiagen's quay repo
+    # pacbio original inputs
+    #File ccs_reads # "child" XML file - sample specific
+    File? ref_genome_fasta # made optional since included in docker iamge
+    #File genome_fasta_fai # do we need this?
     File? mimux_probe_seq_fasta
     Float min_alt_freq = 0.5
     Int min_coverage = 2
     Int min_bq = 80
     String mimux_overrides = ""
 
-    Int nproc = 4
+    Int cpus = 4
     String log_level = "INFO"
     File? tmp_dir
   }
@@ -86,12 +91,22 @@ task run_sample {
   # files is too tightly coupled to tool behavior and we should solve this
   # with traps instead.  it's not clear what we can do in a Cromwell script
   # but there is room for improvement here
-  command {
-    set -e
+  command <<<
+    #set -e
     set -x
-    echo `pwd`
+    pwd
 
-    ########### COMMENTING OUT FOR NOW, STARTING AT MIMUX STEP ######################
+    # set reference genome bash variable since WDL input variable is optional
+    if [[ -n "~{ref_genome_fasta}" ]]; then
+      echo "User reference identified; ~{ref_genome_fasta} will be utilized for alignement. Indexing now with pbmm2...."
+      ref_genome="~{ref_genome_fasta}"
+      pbmm2 index "~{ref_genome_fasta}"
+    else
+      # if user does not provide reference genome, use the reference included in the docker image
+      ref_genome="/reference-data/MN908947.3.SARS-CoV-2.reference.fasta" 
+    fi
+
+    ########### COMMENTING OUT FOR NOW, STARTING AT PBMM2 STEP ######################
     # # to remove any ambiguity we generate a new BAM file first; this will
     # # have already been filtered by BQ >= 80
     # dataset \
@@ -120,75 +135,82 @@ task run_sample {
     # ln -s ${genome_fasta} genome.fasta
     # ln -s ${genome_fasta_fai} genome.fasta.fai
 
-    # remove and record arms & UMI sequences
-    mimux \
-      --log-level ${log_level} \
-      --log-file preprocessing.log \
-      --num-threads ${nproc} \
-      ${"--probes " + mimux_probe_seq_fasta} \
-      --probe-report output.probe_counts.tsv \
-      ${mimux_overrides} \
-      input.consensusreadset.xml \
-      mimux_trimmed.bam
+    # remove record arms & UMI sequences
+    # mimux \
+    #   --log-level ${log_level} \
+    #   --log-file preprocessing.log \
+    #   --num-threads ${nproc} \
+    #   ${"--probes " + mimux_probe_seq_fasta} \
+    #   --probe-report output.probe_counts.tsv \
+    #   ${mimux_overrides} \
+    #   input.consensusreadset.xml \
+    #   mimux_trimmed.bam
 
-    if [ -s "mimux_trimmed.bam" ]; then
-      echo `pwd`/output.probe_counts.tsv >> outputs.fofn
-      # index for bam2fasq -- requires a *.pbi
-      pbindex mimux_trimmed.bam
+    # if [ -s "mimux_trimmed.bam" ]; then
+    #   echo `pwd`/output.probe_counts.tsv >> outputs.fofn
+    #   # index for bam2fasq -- requires a *.pbi
+    #   pbindex mimux_trimmed.bam
 
-      # Generate fastq
-      bam2fastq -u -o output.hifi_reads mimux_trimmed.bam
-      echo `pwd`/output.hifi_reads.fastq >> outputs.fofn
+    #   # Generate fastq
+    #   bam2fastq -u -o output.hifi_reads mimux_trimmed.bam
+    #   echo `pwd`/output.hifi_reads.fastq >> outputs.fofn
 
       # Map the primer-UMI-arm-trimmed MIP reads to the reference genome
+      # TODO - MAKE OUT BAM A TASK OUTPUT?
       pbmm2 align \
-        -j ${nproc} \
-        --log-level ${log_level} \
+        -j ~{cpus} \
+        --log-level ~{log_level} \
         --log-file mapped_trimmed.log \
         --sort --preset HIFI \
-        genome.fasta mimux_trimmed.bam output.mapped.bam
+        "${ref_genome}" ~{pacbio_fastq} output.mapped.bam
+      # index the BAM
       pbindex output.mapped.bam
-      echo `pwd`/output.mapped.bam >> outputs.fofn
+      #echo `pwd`/output.mapped.bam >> outputs.fofn
 
       # Get coverage metrics from samtools
+      # TODO make mpileup a task output?
       samtools mpileup \
         --min-BQ 1 \
-        -f genome.fasta \
+        -f ${ref_genome} \
         -s output.mapped.bam > mapped.bam.mpileup
+      # TODO make depth output a task output? I think this is a TSV?
       samtools depth \
         -q 0 -Q 0 \
         output.mapped.bam > mapped.bam.depth
-    else
-      echo "ERROR: samtools depth failed, no reads?"
-    fi
+    # else
+    #   echo "ERROR: samtools depth failed, no reads?"
+    # fi
 
+    # if BAM from previous step exists and is >0 in filesize, proceed...
     if [ -s "output.mapped.bam" ]; then
-    (bcftools mpileup --open-prob ${bcftools_gap_open_prob} \
-                --indel-size ${bcftools_max_indel_size} \
-                --gap-frac ${bcftools_gap_fraction} \
-                --ext-prob ${bcftools_ext_prob} \
-                --min-ireads ${bcftools_min_indel_reads} \
-                --max-depth ${bcftools_max_depth} \
-                --max-idepth ${bcftools_max_indel_depth} \
-                --seed ${bcftools_seed} \
-                -h ${bcftools_haplotype} \
+    # TODO make any output files from here task outputs? variants_bcftools.vcf
+    (bcftools mpileup --open-prob ~{bcftools_gap_open_prob} \
+                --indel-size ~{bcftools_max_indel_size} \
+                --gap-frac ~{bcftools_gap_fraction} \
+                --ext-prob ~{bcftools_ext_prob} \
+                --min-ireads ~{bcftools_min_indel_reads} \
+                --max-depth ~{bcftools_max_depth} \
+                --max-idepth ~{bcftools_max_indel_depth} \
+                --seed ~{bcftools_seed} \
+                -h ~{bcftools_haplotype} \
                 -B \
                 -a FORMAT/AD \
-                -f genome.fasta \
+                -f ${ref_genome} \
                 output.mapped.bam | \
       bcftools call -mv -Ov | \
-      bcftools norm -f genome.fasta - | \
+      bcftools norm -f ${ref_genome} - | \
       bcftools filter -e 'QUAL < 20' - > variants_bcftools.vcf) || \
       echo "ERROR: variant calling failed"
 
+      # generate the consensus FASTA file
+      # removed this option from below: --sample-name "`cat biosample_clean.txt`" \
       (VCFCons.py \
-        genome.fasta sample \
-        ## --sample-name "`cat biosample_clean.txt`" \
-        --min_coverage ${min_coverage} \
-        --min_alt_freq ${min_alt_freq} \
+        ${ref_genome} ~{samplename} \
+        --min_coverage ~{min_coverage} \
+        --min_alt_freq ~{min_alt_freq} \
         --vcf_type bcftools \
         --input_depth mapped.bam.depth \
-        --min_qual ${min_vcfcons_qual} \
+        --min_qual ~{min_vcfcons_qual} \
         --input_vcf variants_bcftools.vcf > vcfcons.log ) || \
         echo "ERROR: vcfcons failed"
     fi
@@ -198,50 +220,60 @@ task run_sample {
       ln -s sample.vcfcons.fasta output.consensus.fasta
 
       # Now map the consensus sequences to the reference genome
+      # TODO add outputs from this to task outputs?
       pbmm2 align \
-        -j ${nproc} \
-        --log-level ${log_level} \
+        -j ~{cpus} \
+        --log-level ~{log_level} \
         --log-file pbmm2_vcfcons_frag_aligned.log \
         --sort --preset HIFI \
-        genome.fasta sample.vcfcons.frag.fasta \
+        ${ref_genome} sample.vcfcons.frag.fasta \
         output.consensus_mapped.bam
 
-      # this report essentially just annotates the existing outputs with the
-      # sample name pulled from the CCS BAM header.  Inputs are the info.csv
-      # and variants.csv from VCFCons.  Outputs are a report.json
-      # (corresponding to the info.csv) and variants CSV file.
-      python3 -m pbreports.report.sars_cov2_kit_sample \
-        --log-level ${log_level} \
-        --log-file pbreports_sars_cov2_sample.log \
-        --min-coverage ${min_coverage} \
-        input.ccs.bam \
-        --mapped output.mapped.bam \
-        --genome genome.fasta \
-        --trimmed mimux_trimmed.bam \
-        --summary-csv sample.vcfcons.info.csv \
-        --variants-tsv sample.vcfcons.variants.csv \
-        --multistrain-csv sample.multistrain.info.csv \
-        --report-out sample_variants.report.json \
-        --variants-out sample_variants.csv
+    #   # this report essentially just annotates the existing outputs with the
+    #   # sample name pulled from the CCS BAM header.  Inputs are the info.csv
+    #   # and variants.csv from VCFCons.  Outputs are a report.json
+    #   # (corresponding to the info.csv) and variants CSV file.
+    #   python3 -m pbreports.report.sars_cov2_kit_sample \
+    #     --log-level ${log_level} \
+    #     --log-file pbreports_sars_cov2_sample.log \
+    #     --min-coverage ${min_coverage} \
+    #     input.ccs.bam \
+    #     --mapped output.mapped.bam \
+    #     --genome genome.fasta \
+    #     --trimmed mimux_trimmed.bam \
+    #     --summary-csv sample.vcfcons.info.csv \
+    #     --variants-tsv sample.vcfcons.variants.csv \
+    #     --multistrain-csv sample.multistrain.info.csv \
+    #     --report-out sample_variants.report.json \
+    #     --variants-out sample_variants.csv
 
-      # collect VCFCons outputs
-      ln -s variants_bcftools.vcf output.raw.vcf
-      echo `pwd`/output.raw.vcf >> outputs.fofn
-      echo `pwd`/output.vcf >> outputs.fofn
-      echo `pwd`/output.consensus.fasta >> outputs.fofn
-      echo `pwd`/output.consensus_mapped.bam >> outputs.fofn
-      echo `pwd`/output.coverage.png >> outputs.fofn
-    else
-      echo "biosample,path" > FAILED
-      echo "`cat biosample.txt`,`pwd`" >> FAILED
+    #   # collect VCFCons outputs
+    #   ln -s variants_bcftools.vcf output.raw.vcf
+    #   echo `pwd`/output.raw.vcf >> outputs.fofn
+    #   echo `pwd`/output.vcf >> outputs.fofn
+    #   echo `pwd`/output.consensus.fasta >> outputs.fofn
+    #   echo `pwd`/output.consensus_mapped.bam >> outputs.fofn
+    #   echo `pwd`/output.coverage.png >> outputs.fofn
+    # else
+    #   echo "biosample,path" > FAILED
+    #   echo "`cat biosample.txt`,`pwd`" >> FAILED
     fi
-  }
+  >>>
   runtime {
-    cpu: nproc
-    memory: "4GB"
+    cpu: cpus
+    # edited to include space after 4 - for Terra compatibility
+    memory: "4 GB"
+    # Theiagen added
+    docker: "~{docker}"
+    disks: "local-disk 100 SSD"
+    preemptible: 0
   }
   output {
-    File outputs_fofn = "outputs.fofn"
+    # Theiagen added outputs
+    File consensus_asssembly_fasta = "~{samplename}.vcfcons.fasta"
+
+    # original PacBio outputs
+    #File outputs_fofn = "outputs.fofn"
     # These may not exist if one of the steps failed
     File? report = "sample_variants.report.json"
     File? coverage_gff = "output.coverage.gff"
@@ -293,7 +325,7 @@ task pbreports_sars_cov2_kit_summary {
       --csv-out sample_summary.csv \
       merged_samples.report.json \
       summary.report.json
-  }
+  >>>
   runtime {
     cpu: 1
     memory: "2GB"
@@ -391,103 +423,103 @@ task collect_outputs {
   }
 }
 
-workflow pb_sars_cov2_kit {
-  input {
-    File eid_ccs # XML file - "parent" to "child" samples
-    # genome
-    File eid_ref_dataset
-    # optional probe sequences
-    File? probes_fasta
-    Int min_coverage = 4
-    Float min_alt_freq = 0.5
-    Int min_bq = 80
-    String mimux_overrides = ""
-    File? sample_wells_csv
+# workflow pb_sars_cov2_kit {
+#   input {
+#     File eid_ccs # XML file - "parent" to "child" samples
+#     # genome
+#     File eid_ref_dataset
+#     # optional probe sequences
+#     File? probes_fasta
+#     Int min_coverage = 4
+#     Float min_alt_freq = 0.5
+#     Int min_bq = 80
+#     String mimux_overrides = ""
+#     File? sample_wells_csv
 
-    Int nproc = 4
-    String log_level = "INFO"
-    File? tmp_dir
-    # this is not actually respected
-    Int max_nchunks = 1
-  }
+#     Int nproc = 4
+#     String log_level = "INFO"
+#     File? tmp_dir
+#     # this is not actually respected
+#     Int max_nchunks = 1
+#   }
 
-  Int NPROC_MAX = 4
-  Int nproc_sample = if (nproc > NPROC_MAX) then NPROC_MAX else nproc
+#   Int NPROC_MAX = 4
+#   Int nproc_sample = if (nproc > NPROC_MAX) then NPROC_MAX else nproc
 
-  call collect_inputs {
-    input:
-      eid_ccs = eid_ccs,
-      eid_ref_dataset = eid_ref_dataset,
-      sample_wells_csv = sample_wells_csv,
-      min_bq = min_bq,
-      log_level = log_level
-  }
+#   call collect_inputs {
+#     input:
+#       eid_ccs = eid_ccs,
+#       eid_ref_dataset = eid_ref_dataset,
+#       sample_wells_csv = sample_wells_csv,
+#       min_bq = min_bq,
+#       log_level = log_level
+#   }
 
-  scatter (barcoded_ds in collect_inputs.chunks) {
-    call run_sample {
-      input:
-        ccs_reads = barcoded_ds,
-        mimux_probe_seq_fasta = probes_fasta,
-        genome_fasta = collect_inputs.genome_fasta,
-        genome_fasta_fai = collect_inputs.genome_fasta_fai,
-        min_coverage = min_coverage,
-        min_alt_freq = min_alt_freq,
-        min_bq = min_bq,
-        mimux_overrides = mimux_overrides,
-        log_level = log_level,
-        nproc = nproc_sample
-    }
-  }
+#   scatter (barcoded_ds in collect_inputs.chunks) {
+#     call run_sample {
+#       input:
+#         ccs_reads = barcoded_ds,
+#         mimux_probe_seq_fasta = probes_fasta,
+#         genome_fasta = collect_inputs.genome_fasta,
+#         genome_fasta_fai = collect_inputs.genome_fasta_fai,
+#         min_coverage = min_coverage,
+#         min_alt_freq = min_alt_freq,
+#         min_bq = min_bq,
+#         mimux_overrides = mimux_overrides,
+#         log_level = log_level,
+#         nproc = nproc_sample
+#     }
+#   }
 
-  # If there are one ore more FAILED sentinel files, gather them as CSV for
-  # download and reporting
-  Array[File] failures = select_all(run_sample.failure)
-  if (length(failures) > 0) {
-    call collect_failures {
-      input:
-        failures = failures,
-        log_level = log_level
-    }
-  }
+#   # If there are one ore more FAILED sentinel files, gather them as CSV for
+#   # download and reporting
+#   Array[File] failures = select_all(run_sample.failure)
+#   if (length(failures) > 0) {
+#     call collect_failures {
+#       input:
+#         failures = failures,
+#         log_level = log_level
+#     }
+#   }
 
-  # Only run the report if at least one sample succeeded
-  Array[File] sample_reports = select_all(run_sample.report)
-  if (length(sample_reports) > 0) {
-    call pbreports_sars_cov2_kit_summary {
-      input:
-        sample_reports = sample_reports,
-        sample_variants = select_all(run_sample.variants),
-        sample_failures_csv = collect_failures.failures_csv,
-        coverage_gffs = select_all(run_sample.coverage_gff),
-        genome_fasta = collect_inputs.genome_fasta,
-        sample_wells_csv = sample_wells_csv,
-        log_level = log_level
-    }
-  }
+#   # Only run the report if at least one sample succeeded
+#   Array[File] sample_reports = select_all(run_sample.report)
+#   if (length(sample_reports) > 0) {
+#     call pbreports_sars_cov2_kit_summary {
+#       input:
+#         sample_reports = sample_reports,
+#         sample_variants = select_all(run_sample.variants),
+#         sample_failures_csv = collect_failures.failures_csv,
+#         coverage_gffs = select_all(run_sample.coverage_gff),
+#         genome_fasta = collect_inputs.genome_fasta,
+#         sample_wells_csv = sample_wells_csv,
+#         log_level = log_level
+#     }
+#   }
 
-  call collect_outputs {
-    input:
-      outputs_fofns = run_sample.outputs_fofn,
-      sample_failures_csv = collect_failures.failures_csv,
-      nproc = nproc,
-      log_level = log_level
-  }
+#   call collect_outputs {
+#     input:
+#       outputs_fofns = run_sample.outputs_fofn,
+#       sample_failures_csv = collect_failures.failures_csv,
+#       nproc = nproc,
+#       log_level = log_level
+#   }
 
-  output {
-    File? report_sars_cov2 = pbreports_sars_cov2_kit_summary.report
-    File? summary_csv = pbreports_sars_cov2_kit_summary.summary_csv
-    # to SMRT Link these will just look like any other path.  note that they
-    # may be completely empty files, but they will still be created
-    String vcf_zip = collect_outputs.vcf_zip_fn
-    String raw_vcf_zip = collect_outputs.raw_vcf_zip_fn
-    String fasta_zip = collect_outputs.fasta_zip_fn
-    String mapped_zip = collect_outputs.mapped_zip_fn
-    String aligned_frag_zip = collect_outputs.aligned_frag_zip_fn
-    String trimmed_zip = collect_outputs.trimmed_zip_fn
-    String coverage_png_zip = collect_outputs.coverage_png_zip_fn
-    String probe_counts_zip = collect_outputs.probe_counts_zip_fn
-    File? sample_failures_csv = collect_failures.failures_csv
-    File? errors_zip = collect_outputs.errors_zip
-    File? sample_wells_csv_template = collect_inputs.sample_wells_csv_template
-  }
-}
+#   output {
+#     File? report_sars_cov2 = pbreports_sars_cov2_kit_summary.report
+#     File? summary_csv = pbreports_sars_cov2_kit_summary.summary_csv
+#     # to SMRT Link these will just look like any other path.  note that they
+#     # may be completely empty files, but they will still be created
+#     String vcf_zip = collect_outputs.vcf_zip_fn
+#     String raw_vcf_zip = collect_outputs.raw_vcf_zip_fn
+#     String fasta_zip = collect_outputs.fasta_zip_fn
+#     String mapped_zip = collect_outputs.mapped_zip_fn
+#     String aligned_frag_zip = collect_outputs.aligned_frag_zip_fn
+#     String trimmed_zip = collect_outputs.trimmed_zip_fn
+#     String coverage_png_zip = collect_outputs.coverage_png_zip_fn
+#     String probe_counts_zip = collect_outputs.probe_counts_zip_fn
+#     File? sample_failures_csv = collect_failures.failures_csv
+#     File? errors_zip = collect_outputs.errors_zip
+#     File? sample_wells_csv_template = collect_inputs.sample_wells_csv_template
+#   }
+# }
