@@ -2,7 +2,7 @@
 
 WDL workflows and dockerfiles for tools related to PacBio's HiFi Viral SARS-CoV-2 sequence analysis
 
-This repo is under active development and will change without notice.
+:rotating_light: **This repo is under active development and will change without notice** :rotating_light:
 
 ## Docker
 
