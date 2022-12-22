@@ -425,7 +425,24 @@ task collect_outputs {
   }
 }
 
-
+# theiagen-added workflow, done so to simplify existing Pacbio workflow "pb_sars_cov2_kit" commented out below
+workflow pb_hifi_viral_sars_cov2 {
+  input {
+    String samplename 
+    File pacbio_fastq
+  }
+    call run_sample {
+      input:
+      samplename = samplename,
+      pacbio_fastq = pacbio_fastq
+  }
+  output {
+    File asssembly_fasta = run_sample.consensus_asssembly_fasta
+    File aligned_bam = run_sample.aligned_bam
+    File alignment_mpileup_tsv = run_sample.alignment_mpileup_tsv
+    File alignment_depth_tsv = run_sample.alignment_depth_tsv
+  }
+}
 
 
 # workflow pb_sars_cov2_kit {
