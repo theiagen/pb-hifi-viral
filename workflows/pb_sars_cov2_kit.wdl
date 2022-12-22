@@ -52,26 +52,26 @@ task run_sample {
     # theiagen added inputs
     String samplename 
     File pacbio_fastq # input FASTQ files, must have record arms & UMIs removed by mimux prior to this workflow
-    String docker = "pacbio:20221215" # currently only on Curtis' dev VM, will eventually change to publicly available image on Theiagen's quay repo
+    String docker = "quay.io/theiagen/pb-hifi-viral:latest"
     # pacbio original inputs
     #File ccs_reads # "child" XML file - sample specific
     File? ref_genome_fasta # made optional since included in docker iamge
     #File genome_fasta_fai # do we need this?
-    File? mimux_probe_seq_fasta
+    #File? mimux_probe_seq_fasta
     Float min_alt_freq = 0.5
     Int min_coverage = 2
-    Int min_bq = 80
-    String mimux_overrides = ""
+    #Int min_bq = 80
+    #String mimux_overrides = ""
 
     Int cpus = 4
     String log_level = "INFO"
-    File? tmp_dir
+    #File? tmp_dir
   }
 
   # These are constants
-  Int min_score_lead = 10
-  Int min_cluster_read_count = 2
-  Int min_amplicon_length = 100
+  #Int min_score_lead = 10
+  #Int min_cluster_read_count = 2
+  #Int min_amplicon_length = 100
 
   # These are the bcftools variant calling parameters, tested by John Harting.
   Float bcftools_gap_open_prob = 25
@@ -162,28 +162,27 @@ task run_sample {
         --log-level ~{log_level} \
         --log-file mapped_trimmed.log \
         --sort --preset HIFI \
-        "${ref_genome}" ~{pacbio_fastq} output.mapped.bam
+        "${ref_genome}" ~{pacbio_fastq} ~{samplename}.output.mapped.bam
       # index the BAM
-      pbindex output.mapped.bam
+      pbindex ~{samplename}.output.mapped.bam
       #echo `pwd`/output.mapped.bam >> outputs.fofn
 
       # Get coverage metrics from samtools
-      # TODO make mpileup a task output?
       samtools mpileup \
         --min-BQ 1 \
         -f ${ref_genome} \
-        -s output.mapped.bam > mapped.bam.mpileup
-      # TODO make depth output a task output? I think this is a TSV?
+        -s ~{samplename}.output.mapped.bam > ~{samplename}.mapped.bam.mpileup.tsv
+      # compute depth at each position in BAM, output as TSV
       samtools depth \
         -q 0 -Q 0 \
-        output.mapped.bam > mapped.bam.depth
+        ~{samplename}.output.mapped.bam > ~{samplename}.mapped.bam.depth.tsv
     # else
     #   echo "ERROR: samtools depth failed, no reads?"
     # fi
 
     # if BAM from previous step exists and is >0 in filesize, proceed...
-    if [ -s "output.mapped.bam" ]; then
-    # TODO make any output files from here task outputs? variants_bcftools.vcf
+    if [ -s "~{samplename}.output.mapped.bam" ]; then
+    # generate VCF using BAM as input
     (bcftools mpileup --open-prob ~{bcftools_gap_open_prob} \
                 --indel-size ~{bcftools_max_indel_size} \
                 --gap-frac ~{bcftools_gap_fraction} \
@@ -196,10 +195,10 @@ task run_sample {
                 -B \
                 -a FORMAT/AD \
                 -f ${ref_genome} \
-                output.mapped.bam | \
+                ~{samplename}.output.mapped.bam | \
       bcftools call -mv -Ov | \
       bcftools norm -f ${ref_genome} - | \
-      bcftools filter -e 'QUAL < 20' - > variants_bcftools.vcf) || \
+      bcftools filter -e 'QUAL < 20' - > ~{samplename}.variants_bcftools.vcf) || \
       echo "ERROR: variant calling failed"
 
       # generate the consensus FASTA file
@@ -209,9 +208,9 @@ task run_sample {
         --min_coverage ~{min_coverage} \
         --min_alt_freq ~{min_alt_freq} \
         --vcf_type bcftools \
-        --input_depth mapped.bam.depth \
+        --input_depth ~{samplename}.mapped.bam.depth.tsv \
         --min_qual ~{min_vcfcons_qual} \
-        --input_vcf variants_bcftools.vcf > vcfcons.log ) || \
+        --input_vcf ~{samplename}.variants_bcftools.vcf > vcfcons.log ) || \
         echo "ERROR: vcfcons failed"
     fi
 
@@ -271,6 +270,9 @@ task run_sample {
   output {
     # Theiagen added outputs
     File consensus_asssembly_fasta = "~{samplename}.vcfcons.fasta"
+    File aligned_bam = "~{samplename}.output.mapped.bam"
+    File alignment_mpileup_tsv = "~{samplename}.mapped.bam.mpileup.tsv"
+    File alignment_depth_tsv = "~{samplename}.mapped.bam.depth.tsv"
 
     # original PacBio outputs
     #File outputs_fofn = "outputs.fofn"
@@ -422,6 +424,9 @@ task collect_outputs {
     File? errors_zip = "error_logs.zip"
   }
 }
+
+
+
 
 # workflow pb_sars_cov2_kit {
 #   input {
