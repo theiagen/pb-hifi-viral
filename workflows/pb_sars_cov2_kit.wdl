@@ -437,7 +437,7 @@ workflow pb_hifi_viral_sars_cov2 {
       pacbio_fastq = pacbio_fastq
   }
   output {
-    File asssembly_fasta = run_sample.consensus_asssembly_fasta
+    File assembly_fasta = run_sample.consensus_asssembly_fasta
     File aligned_bam = run_sample.aligned_bam
     File alignment_mpileup_tsv = run_sample.alignment_mpileup_tsv
     File alignment_depth_tsv = run_sample.alignment_depth_tsv
